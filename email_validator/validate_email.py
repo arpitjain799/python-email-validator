@@ -17,12 +17,16 @@ def validate_email(
     test_environment: Optional[bool] = None,
     globally_deliverable: Optional[bool] = None,
     timeout: Optional[int] = None,
-    dns_resolver: Optional[object] = None
+    dns_resolver: Optional[object] = None,
+    _async: bool = False
 ) -> ValidatedEmail:
     """
     Validates an email address, raising an EmailNotValidError if the address is not valid or returning a dict of
     information when the address is valid. The email argument can be a str or a bytes instance,
     but if bytes it must be ASCII-only. This is the main method of this library.
+
+    _async is False for a regular (synchronous) call in which DNS queries are synchronous.
+    Pass True for an asynchronous call and get back a Future immediately. 
     """
 
     # Fill in default values of arguments.
@@ -74,7 +78,7 @@ def validate_email(
             raise EmailSyntaxError("The email address is not valid. It must have exactly one @-sign.")
         local_part, domain_part = parts
 
-    # Collect return values in this instance.
+    # Collect information about a successful validation in a ValidatedEmail instance.
     emailinfo = ValidatedEmail()
     emailinfo.original = email
 
@@ -171,17 +175,31 @@ def validate_email(
             reason = "(when encoded in bytes)"
         raise EmailSyntaxError(f"The email address is too long {reason}.")
 
-    if check_deliverability and not test_environment:
-        # Validate the email address's deliverability using DNS
-        # and update ret in-place.
-
-        if is_domain_literal:
-            # There is nothing to check --- skip deliverability checks.
-            return emailinfo
-
+    if check_deliverability and not test_environment and not is_domain_literal:
         # Lazy load `deliverability` as it is slow to import (due to dns.resolver)
         from .deliverability import validate_email_deliverability
 
-        validate_email_deliverability(emailinfo, timeout, dns_resolver)
+        # Validate the email address's deliverability using DNS
+        # and update ret in-place.
+        future = validate_email_deliverability(emailinfo, timeout, dns_resolver, _async=_async)
 
+        # When running asynchronously, a Future is returned, which we
+        # can pass to the caller. When running synchonously, nothing
+        # is returned by validate_email_deliverability and emailinfo is
+        # updated in place.
+        if _async:
+            return future
+
+    elif _async:
+        # If no deliverability check is being performed, return a Future
+        # that is already complete and holds the validation information
+        # object as its result.
+        import asyncio
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        future.set_result(emailinfo)
+        return future
+
+    # When called synchronously, return the validation information
+    # and normalized email address.
     return emailinfo
