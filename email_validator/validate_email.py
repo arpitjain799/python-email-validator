@@ -75,8 +75,8 @@ def validate_email(
         local_part, domain_part = parts
 
     # Collect return values in this instance.
-    ret = ValidatedEmail()
-    ret.original = email
+    emailinfo = ValidatedEmail()
+    emailinfo.original = email
 
     # Validate the email address's local part syntax and get a normalized form.
     # If the original address was quoted and the decoded local part is a valid
@@ -88,18 +88,18 @@ def validate_email(
                                                 quoted_local_part=quoted_local_part)
     if quoted_local_part and not allow_quoted_local:
         raise EmailSyntaxError("Quoting the part before the @-sign is not allowed here.")
-    ret.local_part = local_part_info["local_part"]
-    ret.ascii_local_part = local_part_info["ascii_local_part"]
-    ret.smtputf8 = local_part_info["smtputf8"]
+    emailinfo.local_part = local_part_info["local_part"]
+    emailinfo.ascii_local_part = local_part_info["ascii_local_part"]
+    emailinfo.smtputf8 = local_part_info["smtputf8"]
 
     # Some local parts are required to be case-insensitive, so we should normalize
     # to lowercase.
     # RFC 2142
-    if ret.ascii_local_part is not None \
-       and ret.ascii_local_part.lower() in CASE_INSENSITIVE_MAILBOX_NAMES \
-       and ret.local_part is not None:
-        ret.ascii_local_part = ret.ascii_local_part.lower()
-        ret.local_part = ret.local_part.lower()
+    if emailinfo.ascii_local_part is not None \
+       and emailinfo.ascii_local_part.lower() in CASE_INSENSITIVE_MAILBOX_NAMES \
+       and emailinfo.local_part is not None:
+        emailinfo.ascii_local_part = emailinfo.ascii_local_part.lower()
+        emailinfo.local_part = emailinfo.local_part.lower()
 
     # Validate the email address's domain part syntax and get a normalized form.
     is_domain_literal = False
@@ -109,28 +109,28 @@ def validate_email(
     elif domain_part.startswith("[") and domain_part.endswith("]"):
         # Parse the address in the domain literal and get back a normalized domain.
         domain_part_info = validate_email_domain_literal(domain_part[1:-1], allow_domain_literal=allow_domain_literal)
-        ret.domain = domain_part_info["domain"]
-        ret.ascii_domain = domain_part_info["domain"]  # Domain literals are always ASCII.
-        ret.domain_address = domain_part_info["domain_address"]
+        emailinfo.domain = domain_part_info["domain"]
+        emailinfo.ascii_domain = domain_part_info["domain"]  # Domain literals are always ASCII.
+        emailinfo.domain_address = domain_part_info["domain_address"]
         is_domain_literal = True  # Prevent deliverability checks.
 
     else:
         # Check the syntax of the domain and get back a normalized
         # internationalized and ASCII form.
         domain_part_info = validate_email_domain_name(domain_part, test_environment=test_environment, globally_deliverable=globally_deliverable)
-        ret.domain = domain_part_info["domain"]
-        ret.ascii_domain = domain_part_info["ascii_domain"]
+        emailinfo.domain = domain_part_info["domain"]
+        emailinfo.ascii_domain = domain_part_info["ascii_domain"]
 
     # Construct the complete normalized form.
-    ret.normalized = ret.local_part + "@" + ret.domain
+    emailinfo.normalized = emailinfo.local_part + "@" + emailinfo.domain
 
     # If the email address has an ASCII form, add it.
-    if not ret.smtputf8:
-        if not ret.ascii_domain:
+    if not emailinfo.smtputf8:
+        if not emailinfo.ascii_domain:
             raise Exception("Missing ASCII domain.")
-        ret.ascii_email = (ret.ascii_local_part or "") + "@" + ret.ascii_domain
+        emailinfo.ascii_email = (emailinfo.ascii_local_part or "") + "@" + emailinfo.ascii_domain
     else:
-        ret.ascii_email = None
+        emailinfo.ascii_email = None
 
     # If the email address has an ASCII representation, then we assume it may be
     # transmitted in ASCII (we can't assume SMTPUTF8 will be used on all hops to
@@ -152,39 +152,36 @@ def validate_email(
     # longer than the number of characters.
     #
     # See the length checks on the local part and the domain.
-    if ret.ascii_email and len(ret.ascii_email) > EMAIL_MAX_LENGTH:
-        if ret.ascii_email == ret.normalized:
-            reason = get_length_reason(ret.ascii_email)
-        elif len(ret.normalized) > EMAIL_MAX_LENGTH:
+    if emailinfo.ascii_email and len(emailinfo.ascii_email) > EMAIL_MAX_LENGTH:
+        if emailinfo.ascii_email == emailinfo.normalized:
+            reason = get_length_reason(emailinfo.ascii_email)
+        elif len(emailinfo.normalized) > EMAIL_MAX_LENGTH:
             # If there are more than 254 characters, then the ASCII
             # form is definitely going to be too long.
-            reason = get_length_reason(ret.normalized, utf8=True)
+            reason = get_length_reason(emailinfo.normalized, utf8=True)
         else:
             reason = "(when converted to IDNA ASCII)"
         raise EmailSyntaxError(f"The email address is too long {reason}.")
-    if len(ret.normalized.encode("utf8")) > EMAIL_MAX_LENGTH:
-        if len(ret.normalized) > EMAIL_MAX_LENGTH:
+    if len(emailinfo.normalized.encode("utf8")) > EMAIL_MAX_LENGTH:
+        if len(emailinfo.normalized) > EMAIL_MAX_LENGTH:
             # If there are more than 254 characters, then the UTF-8
             # encoding is definitely going to be too long.
-            reason = get_length_reason(ret.normalized, utf8=True)
+            reason = get_length_reason(emailinfo.normalized, utf8=True)
         else:
             reason = "(when encoded in bytes)"
         raise EmailSyntaxError(f"The email address is too long {reason}.")
 
     if check_deliverability and not test_environment:
         # Validate the email address's deliverability using DNS
-        # and update the return dict with metadata.
+        # and update ret in-place.
 
         if is_domain_literal:
             # There is nothing to check --- skip deliverability checks.
-            return ret
+            return emailinfo
 
         # Lazy load `deliverability` as it is slow to import (due to dns.resolver)
         from .deliverability import validate_email_deliverability
-        deliverability_info = validate_email_deliverability(
-            ret.ascii_domain, ret.domain, timeout, dns_resolver
-        )
-        for key, value in deliverability_info.items():
-            setattr(ret, key, value)
 
-    return ret
+        validate_email_deliverability(emailinfo, timeout, dns_resolver)
+
+    return emailinfo

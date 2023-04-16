@@ -1,7 +1,7 @@
 import pytest
 import re
 
-from email_validator import EmailUndeliverableError, \
+from email_validator import EmailUndeliverableError, ValidatedEmail, \
                             validate_email, caching_resolver
 from email_validator.deliverability import validate_email_deliverability
 
@@ -11,30 +11,32 @@ RESOLVER = MockedDnsResponseData.create_resolver()
 
 
 def test_deliverability_found():
-    response = validate_email_deliverability('gmail.com', 'gmail.com', dns_resolver=RESOLVER)
-    assert response.keys() == {'mx', 'mx_fallback_type'}
-    assert response['mx_fallback_type'] is None
-    assert len(response['mx']) > 1
-    assert len(response['mx'][0]) == 2
-    assert isinstance(response['mx'][0][0], int)
-    assert response['mx'][0][1].endswith('.com')
+    emailinfo = ValidatedEmail()
+    emailinfo.domain = "gmail.com"
+    emailinfo.ascii_domain = "gmail.com"
+    validate_email_deliverability(emailinfo, dns_resolver=RESOLVER)
+    assert emailinfo.mx_fallback_type is None
+    assert len(emailinfo.mx) > 1
+    assert len(emailinfo.mx[0]) == 2
+    assert isinstance(emailinfo.mx[0][0], int)
+    assert emailinfo.mx[0][1].endswith('.com')
 
 
 def test_deliverability_fails():
     # No MX record.
     domain = 'xkxufoekjvjfjeodlfmdfjcu.com'
     with pytest.raises(EmailUndeliverableError, match=f'The domain name {domain} does not exist'):
-        validate_email_deliverability(domain, domain, dns_resolver=RESOLVER)
+        validate_email_deliverability(domain, dns_resolver=RESOLVER)
 
     # Null MX record.
     domain = 'example.com'
     with pytest.raises(EmailUndeliverableError, match=f'The domain name {domain} does not accept email'):
-        validate_email_deliverability(domain, domain, dns_resolver=RESOLVER)
+        validate_email_deliverability(domain, dns_resolver=RESOLVER)
 
     # No MX record, A record fallback, reject-all SPF record.
     domain = 'nellis.af.mil'
     with pytest.raises(EmailUndeliverableError, match=f'The domain name {domain} does not send email'):
-        validate_email_deliverability(domain, domain, dns_resolver=RESOLVER)
+        validate_email_deliverability(domain, dns_resolver=RESOLVER)
 
 
 @pytest.mark.parametrize(
@@ -55,7 +57,7 @@ def test_email_example_reserved_domain(email_input):
 
 
 def test_deliverability_dns_timeout():
-    response = validate_email_deliverability('timeout.com', 'timeout.com', dns_resolver=RESOLVER)
+    response = validate_email_deliverability('timeout.com', dns_resolver=RESOLVER)
     assert "mx" not in response
     assert response.get("unknown-deliverability") == "timeout"
 

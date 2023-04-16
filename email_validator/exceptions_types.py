@@ -60,7 +60,10 @@ class ValidatedEmail(object):
 
     """If no MX records are actually specified in DNS and instead are inferred, through an obsolete
     mechanism, from A or AAAA records, the value is the type of DNS record used instead (`A` or `AAAA`)."""
-    mx_fallback_type: str
+    mx_fallback_type: Optional[str]
+
+    """If an SPF query is made, the SPF record."""
+    spf: Optional[str]
 
     """Tests use this constructor."""
     def __init__(self, **kwargs):
